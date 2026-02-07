@@ -1,4 +1,4 @@
-import { AppBar, Toolbar, Typography, Box, IconButton, Badge } from '@mui/material';
+import { AppBar, Toolbar, Box, IconButton, Badge } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import ChatIcon from '@mui/icons-material/Chat';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
@@ -9,24 +9,13 @@ export default function Header() {
         <AppBar position="static" sx={{ bgcolor: '#1e3a5f', boxShadow: 'none' }}>
             <Toolbar sx={{ minHeight: 40 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box
-                        sx={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: '50%',
-                            background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}
-                    >
-                        <Typography sx={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>
-                            <img src="https://assets.codepen.io/1692350/skygeni_logo.png" style={{ width: 20, height: 20 }} alt="logo" />
-                        </Typography>
+                    <Box sx={{ height: 32, display: 'flex' }}>
+                        <img
+                            src="https://cdn.prod.website-files.com/67d05b82be5809e1bcda501d/6822ba76af86f212e67a4c94_SkyGeniLogo-p-500.png"
+                            alt="SkyGeni"
+                            style={{ height: '100%', width: 'auto' }}
+                        />
                     </Box>
-                    <Typography variant="h6" component="div" sx={{ fontWeight: 700, fontSize: '1.25rem' }}>
-                        SkyGeni
-                    </Typography>
                 </Box>
 
                 <Box sx={{ flexGrow: 1 }} />
