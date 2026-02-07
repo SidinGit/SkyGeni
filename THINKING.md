@@ -22,18 +22,21 @@ This section answers: "What was the 'easy' way vs. the 'right' way, and why did 
 
 *   **In-Memory Aggregation vs. Database Aggregation**:
     *   **The Problem**: We need to sum up revenue by month.
-    *   **Option A (Database Way - "The Right Way")**: Write a complex SQL query (`SELECT SUM(amount) ... GROUP BY MONTH(closed_at)`). This is fast for the database but harder to write/debug quickly if we are setting up a new project or using a mock database.
-    *   **Option B (In-Memory Way - "The Easy Way")**: Fetch *all* data to the backend (JavaScript) and use a `for` loop or `.reduce()` to sum it up.
-    *   **Our Choice**: We chose **Option B**.
-    *   **Why?**: For a small dataset (5000 deals), JavaScript is blazing fast and the code is very readable. It allowed us to move faster. The "tradeoff" is that we sacrificed **scalability** (it won't work for 1 million deals) for **development speed**.
+    *   **Initial Approach (The "Easy" Way)**: Fetch *all* data to the backend (JavaScript) and use a `for` loop. This was fast to develop but slow at scale (1s latency).
+    *   **Final Optimization (The "Right" Way)**: Switched to **Raw SQL Aggregation** (`prisma.$queryRaw`) inside `trend.controller` and `drivers.controller`.
+    *   **Why**: Reduced response time to ~200ms and memory usage from MBs to KBs. The tradeoff is complex SQL queries instead of simple JS logic.
+
+*   **Prisma ORM vs. Raw SQL**:
+    *   **Choice**: Hybrid.
+    *   **Logic**: Used Prisma for simple CRUD (creating deals/accounts) because it's type-safe. Used **Raw SQL** for complex analytics (Trends, Risk Factors) because Prisma's aggregation capabilities were too limited for advanced filtering (e.g., "Win Rate" calculation).
 
 ## What would break at 10× scale?
 This section answers: "If this company suddenly got huge, what parts of our code would crash first?"
 
-1.  **Backend Memory (The "OOM" Crash)**:
-    *   **Current State**: In `trend.controller.ts`, we do `prisma.deal.findMany()`. This loads **every single closed deal** into the server's RAM.
-    *   **At 10x/100x Scale**: If we have 1,000,000 deals, loading them all into a JavaScript array might take 2GB+ of RAM. Node.js typically crashes around 1.5GB-2GB.
-    *   **The Fix**: Use **Pagination** (load 50 at a time) or **Database Aggregation** (let the database do the math and only send back the final 12 numbers for the months).
+1.  **Database CPU (The New Bottleneck)**:
+    *   **Current State**: We solved the "Backend Memory" crash by moving aggregation to the database (SQL).
+    *   **At 10x/100x Scale**: Aggregating 1,000,000 rows on every API call will spike the Database CPU.
+    *   **The Fix**: Add **Database Indexes** on `closed_at`, `stage`, and `created_at` columns. Implement **Caching** (Redis) for the trend endpoints so we don't re-calculate every second.
 
 2.  **Frontend Performance (The "Sluggish UI")**:
     *   **Current State**: We use SVG (Scalable Vector Graphics) for the charts. Each bar and dot is a separate DOM element.
