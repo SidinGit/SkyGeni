@@ -108,7 +108,7 @@ const SparkLine = ({ color, dataPoints }: { color: string; dataPoints: number[] 
     const yScale = d3.scaleLinear().domain([Math.min(...dataPoints), Math.max(...dataPoints)]).range([CHART_HEIGHT - 5, 5]);
 
     const lineGenerator = d3.line<number>()
-        .x((d, i) => xScale(i))
+        .x((_, i) => xScale(i))
         .y(d => yScale(d))
         .curve(d3.curveMonotoneX);
 
