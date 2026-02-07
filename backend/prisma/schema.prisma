@@ -1,0 +1,51 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  account_id String @id
+  name       String
+  industry   String
+  segment    String
+  deals      Deal[]
+}
+
+model Rep {
+  rep_id String @id
+  name   String
+  deals  Deal[]
+}
+
+model Deal {
+  deal_id    String     @id
+  account_id String
+  rep_id     String
+  stage      String
+  amount     Int?
+  created_at DateTime
+  closed_at  DateTime?
+  account    Account    @relation(fields: [account_id], references: [account_id])
+  rep        Rep        @relation(fields: [rep_id], references: [rep_id])
+  activities Activity[]
+}
+
+model Activity {
+  activity_id String   @id
+  deal_id     String
+  type        String
+  timestamp   DateTime
+  deal        Deal     @relation(fields: [deal_id], references: [deal_id])
+}
+
+model Target {
+  month  String @id
+  target Int
+}
