@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
+import compression from 'compression';
+import morgan from 'morgan';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger';
 import summaryRouter from './routes/summary.route';
@@ -16,7 +19,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(helmet()); // Security Headers
+app.use(compression()); // Gzip compression
+app.use(morgan('dev')); // Logging
+app.use(cors({
+    origin: process.env.FRONTEND_URL || '*', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
 // Swagger Documentation
@@ -39,6 +49,6 @@ app.get('/', (_req, res) => {
 })
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📚 API Docs available at http://localhost:${PORT}/api-docs`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📚 API Docs available at /api-docs`);
 });
