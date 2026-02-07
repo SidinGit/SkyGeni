@@ -44,108 +44,92 @@ export const getRiskFactors = async (_req: Request, res: Response): Promise<void
             ),
         }));
 
-        // 2. Underperforming Reps: Optimized to avoid N+1
-        const [repStats, repWinCounts, allReps] = await Promise.all([
-            prisma.deal.groupBy({
-                by: ['rep_id'],
-                where: { stage: { in: ['Closed Won', 'Closed Lost'] } },
-                _count: { deal_id: true },
-            }),
-            prisma.deal.groupBy({
-                by: ['rep_id'],
-                where: { stage: 'Closed Won' },
-                _count: { deal_id: true },
-            }),
-            prisma.rep.findMany() // Fetch ALL reps once
-        ]);
+        // 2. Underperforming Reps: Database Level Calculation
+        // Calculate Win Rate for each rep and filter those below average
+        const underperformingReps = await prisma.$queryRaw<Array<{
+            repId: string;
+            repName: string;
+            winRate: number;
+            totalClosed: bigint;
+            avgWinRate: number;
+        }>>`
+            WITH RepStats AS (
+                SELECT 
+                    r.rep_id,
+                    r.name,
+                    COUNT(d.deal_id) FILTER (WHERE d.stage = 'Closed Won') as wins,
+                    COUNT(d.deal_id) as total,
+                    CASE 
+                        WHEN COUNT(d.deal_id) > 0 
+                        THEN (COUNT(d.deal_id) FILTER (WHERE d.stage = 'Closed Won')::FLOAT / COUNT(d.deal_id)::FLOAT) * 100 
+                        ELSE 0 
+                    END as win_rate
+                FROM "Rep" r
+                JOIN "Deal" d ON r.rep_id = d.rep_id
+                WHERE d.stage IN ('Closed Won', 'Closed Lost')
+                GROUP BY r.rep_id, r.name
+                HAVING COUNT(d.deal_id) >= 5
+            ),
+            GlobalStats AS (
+                SELECT AVG(win_rate) as global_avg 
+                FROM RepStats
+            )
+            SELECT 
+                rs.rep_id as "repId",
+                rs.name as "repName",
+                rs.win_rate as "winRate",
+                rs.total as "totalClosed",
+                gs.global_avg as "avgWinRate"
+            FROM RepStats rs, GlobalStats gs
+            WHERE rs.win_rate < gs.global_avg
+            ORDER BY rs.win_rate ASC
+            LIMIT 5;
+        `;
 
-        const repMap = new Map(allReps.map(r => [r.rep_id, r.name]));
-        const repWinMap = new Map(repWinCounts.map((r) => [r.rep_id, r._count.deal_id]));
+        const formattedReps = underperformingReps.map(r => ({
+            repId: r.repId,
+            repName: r.repName,
+            winRate: Math.round(Number(r.winRate) * 100) / 100,
+            avgWinRate: Math.round(Number(r.avgWinRate) * 100) / 100,
+            gapFromAvg: Math.round((Number(r.avgWinRate) - Number(r.winRate)) * 100) / 100
+        }));
 
-        const repWinRates = repStats.map((r) => {
-            const wins = repWinMap.get(r.rep_id) || 0;
-            const total = r._count.deal_id;
-            return {
-                repId: r.rep_id,
-                repName: repMap.get(r.rep_id) || 'Unknown',
-                winRate: (wins / total) * 100,
-                totalClosed: total
-            };
-        });
+        // 3. Low Activity Accounts: Database Level Aggregation
+        // Find accounts with < 2 activities in last 30 days on their open deals
+        const lowActivityAccountsRaw = await prisma.$queryRaw<Array<{
+            accountId: string;
+            accountName: string;
+            segment: string;
+            activityCount: bigint;
+        }>>`
+            SELECT 
+                a.account_id as "accountId",
+                a.name as "accountName",
+                a.segment,
+                COUNT(act.activity_id) as "activityCount"
+            FROM "Account" a
+            JOIN "Deal" d ON a.account_id = d.account_id
+            LEFT JOIN "Activity" act ON d.deal_id = act.deal_id AND act.timestamp >= ${thirtyDaysAgo}
+            WHERE d.stage NOT IN ('Closed Won', 'Closed Lost')
+            GROUP BY a.account_id, a.name, a.segment
+            HAVING COUNT(act.activity_id) < 2
+            LIMIT 10;
+        `;
 
-        const avgWinRate = repWinRates.length > 0
-            ? repWinRates.reduce((sum, r) => sum + r.winRate, 0) / repWinRates.length
-            : 0;
-
-        const underperformingReps = repWinRates
-            .filter((r) => r.winRate < avgWinRate && r.totalClosed >= 5)
-            .map(r => ({
-                repId: r.repId,
-                repName: r.repName,
-                winRate: Math.round(r.winRate * 100) / 100,
-                avgWinRate: Math.round(avgWinRate * 100) / 100,
-                gapFromAvg: Math.round((avgWinRate - r.winRate) * 100) / 100,
-            }))
-            .sort((a, b) => a.winRate - b.winRate)
-            .slice(0, 5);
-
-        // 3. Low Activity Accounts: Optimized
-        // Fetch all open deals with their accounts and activity counts in one go if possible, 
-        // but Prisma doesn't do deep aggregation easily. 
-        // Better approach: Fetch all open deals + accounts, then fetch activities for those deals in batch.
-
-        const openDeals = await prisma.deal.findMany({
-            where: { stage: { notIn: ['Closed Won', 'Closed Lost'] } },
-            select: { deal_id: true, account_id: true, account: { select: { name: true, segment: true } } }
-        });
-
-        const openDealIds = openDeals.map(d => d.deal_id);
-
-        // Batch fetch activity counts for these deals
-        const recentActivities = await prisma.activity.groupBy({
-            by: ['deal_id'],
-            where: {
-                deal_id: { in: openDealIds },
-                timestamp: { gte: thirtyDaysAgo }
-            },
-            _count: { activity_id: true }
-        });
-
-        const activityCountMap = new Map(recentActivities.map(a => [a.deal_id, a._count.activity_id]));
-
-        const accountActivityMap = new Map<string, { name: string, segment: string, count: number }>();
-
-        for (const deal of openDeals) {
-            const count = activityCountMap.get(deal.deal_id) || 0;
-            const existing = accountActivityMap.get(deal.account_id);
-            if (existing) {
-                existing.count += count;
-            } else {
-                accountActivityMap.set(deal.account_id, {
-                    name: deal.account.name,
-                    segment: deal.account.segment,
-                    count
-                });
-            }
-        }
-
-        const lowActivityAccounts = Array.from(accountActivityMap.entries())
-            .filter(([_, data]) => data.count < 2)
-            .map(([accountId, data]) => ({
-                accountId,
-                accountName: data.name,
-                segment: data.segment,
-                activityCount: data.count
-            }))
-            .slice(0, 10);
+        const lowActivityAccounts = lowActivityAccountsRaw.map(a => ({
+            accountId: a.accountId,
+            accountName: a.accountName,
+            segment: a.segment,
+            activityCount: Number(a.activityCount)
+        }));
 
         res.json({
-            staleDeals: staleDealsFormatted,
-            underperformingReps,
-            lowActivityAccounts,
+            staleDeals: staleDealsFormatted.slice(0, 10), // Top 10
+            underperformingReps: formattedReps,
+            lowActivityAccounts: lowActivityAccounts,
             summary: {
                 totalStaleDeals: staleDealsFormatted.length,
-                totalUnderperformingReps: underperformingReps.length,
+                totalUnderperformingReps: formattedReps.length,
                 totalLowActivityAccounts: lowActivityAccounts.length,
             },
         });
